@@ -1,0 +1,1 @@
+eviction,prefetcher,cache_size,interaction_window,miss_ratio,byte_miss_ratio,n_req,n_prefetch,n_prefetch_then_evict,n_evict,n_evict_then_prefetch,log_path,status

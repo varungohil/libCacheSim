@@ -18,6 +18,7 @@
 #include <sys/types.h>
 
 #include "libCacheSim/prefetchAlgo.h"
+#include "libCacheSim/prefetchInteraction.h"
 
 #define TRACK_BLOCK 192618l
 #define SANITY_CHECK 1
@@ -71,6 +72,8 @@ static void PG_parse_init_params(const char *cache_specific_params,
       init_params->max_metadata_size = atof(value);
     } else if (strcasecmp(key, "prefetch-threshold") == 0) {
       init_params->prefetch_threshold = atof(value);
+    } else if (prefetch_interaction_is_param_key(key)) {
+      /* handled by prefetch_interaction tracker on the cache */
     } else if (strcasecmp(key, "print") == 0 ||
                strcasecmp(key, "default") == 0) {
       printf("default params: %s\n", PG_default_params());
@@ -185,6 +188,11 @@ void PG_prefetch(cache_t *cache, const request_t *req) {
           cache->evict(cache, new_req);
         }
         cache->insert(cache, new_req);
+
+        if (cache->prefetch_interaction) {
+          prefetch_interaction_on_prefetch(cache->prefetch_interaction,
+                                           new_req->obj_id, cache->n_req);
+        }
 
         PG_params->num_of_prefetch += 1;
 

@@ -10,6 +10,7 @@
 #include "libCacheSim/const.h"
 #include "libCacheSim/dist.h"
 #include "libCacheSim/prefetchAlgo.h"
+#include "libCacheSim/prefetchInteraction.h"
 #include "utils/include/mystr.h"
 #include "utils/include/mysys.h"
 
@@ -73,7 +74,8 @@ static struct argp_option options[] = {
     {"prefetch", OPTION_PREFETCH_ALGO, "Mithril", 0,
      "Prefetching algorithm: Mithril/OBL/PG/AMP", 4},
     {"prefetch-params", OPTION_PREFETCH_PARAMS, "\"block-size=65536\"", 0,
-     "optional params for each prefetching algorithm, e.g., block-size=65536",
+     "prefetch params, e.g., block-size=65536,interaction-window=100 "
+     "(or prefetch-evict-window / evict-prefetch-window)",
      4},
 
     {0, 0, 0, 0, "Other options:", 6},
@@ -357,6 +359,8 @@ void parse_cmd(int argc, char *argv[], struct arguments *args) {
       if (args->prefetch_algo != NULL) {
         args->caches[idx]->prefetcher = create_prefetcher(
             args->prefetch_algo, args->prefetch_params, args->cache_sizes[j]);
+        args->caches[idx]->prefetch_interaction =
+            prefetch_interaction_create_from_params(args->prefetch_params);
       }
     }
   }

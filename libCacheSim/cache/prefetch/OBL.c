@@ -20,6 +20,7 @@
 #include <sys/types.h>
 
 #include "libCacheSim/prefetchAlgo.h"
+#include "libCacheSim/prefetchInteraction.h"
 // #define DEBUG
 
 #ifdef __cplusplus
@@ -55,6 +56,8 @@ static void OBL_parse_init_params(const char *cache_specific_params,
       init_params->block_size = atoi(value);
     } else if (strcasecmp(key, "sequential-confidence-k") == 0) {
       init_params->sequential_confidence_k = atoi(value);
+    } else if (prefetch_interaction_is_param_key(key)) {
+      /* handled by prefetch_interaction tracker on the cache */
     } else {
       ERROR("OBL does not have parameter %s\n", key);
       printf("default params: %s\n", OBL_default_params());
@@ -136,6 +139,10 @@ static void OBL_prefetch(cache_t *cache, const request_t *req) {
       cache->evict(cache, req);
     }
     cache->insert(cache, new_req);
+    if (cache->prefetch_interaction) {
+      prefetch_interaction_on_prefetch(cache->prefetch_interaction,
+                                       new_req->obj_id, cache->n_req);
+    }
     free_request(new_req);
   }
 }

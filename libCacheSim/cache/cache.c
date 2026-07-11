@@ -6,6 +6,7 @@
 
 #include "../dataStructure/hashtable/hashtable.h"
 #include "libCacheSim/prefetchAlgo.h"
+#include "libCacheSim/prefetchInteraction.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,6 +41,7 @@ cache_t *cache_struct_init(const char *const cache_name,
   cache->eviction_params = NULL;
   cache->admissioner = NULL;
   cache->prefetcher = NULL;
+  cache->prefetch_interaction = NULL;
   cache->future_stack_dist = NULL;
   cache->future_stack_dist_array_size = 0;
   cache->default_ttl = params.default_ttl;
@@ -79,6 +81,10 @@ void cache_struct_free(cache_t *cache) {
   free_hashtable(cache->hashtable);
   if (cache->admissioner != NULL) cache->admissioner->free(cache->admissioner);
   if (cache->prefetcher != NULL) cache->prefetcher->free(cache->prefetcher);
+  if (cache->prefetch_interaction != NULL) {
+    prefetch_interaction_free(cache->prefetch_interaction);
+    cache->prefetch_interaction = NULL;
+  }
   my_free(sizeof(cache_t), cache);
 }
 
@@ -101,6 +107,8 @@ cache_t *clone_cache(const cache_t *old_cache) {
   if (old_cache->admissioner != NULL) {
     cache->admissioner = old_cache->admissioner->clone(old_cache->admissioner);
   }
+  cache->prefetch_interaction =
+      prefetch_interaction_clone(old_cache->prefetch_interaction);
   cache->future_stack_dist = old_cache->future_stack_dist;
   cache->future_stack_dist_array_size = old_cache->future_stack_dist_array_size;
 
@@ -131,6 +139,8 @@ cache_t *create_cache_with_new_size(const cache_t *old_cache,
     cache->prefetcher =
         old_cache->prefetcher->clone(old_cache->prefetcher, new_size);
   }
+  cache->prefetch_interaction =
+      prefetch_interaction_clone(old_cache->prefetch_interaction);
   cache->future_stack_dist = old_cache->future_stack_dist;
   cache->future_stack_dist_array_size = old_cache->future_stack_dist_array_size;
   return cache;
@@ -187,6 +197,11 @@ cache_obj_t *cache_find_base(cache_t *cache, const request_t *req,
   if (cache->prefetcher && cache->prefetcher->handle_find && update_cache) {
     bool hit = (cache_obj != NULL);
     cache->prefetcher->handle_find(cache, req, hit);
+  }
+
+  if (update_cache && cache_obj != NULL && cache->prefetch_interaction) {
+    prefetch_interaction_on_demand_hit(cache->prefetch_interaction,
+                                       req->obj_id);
   }
 
   if (cache_obj != NULL) {
@@ -311,6 +326,7 @@ void cache_evict_base(cache_t *cache, cache_obj_t *obj,
     record_eviction_age(cache, obj, CURR_TIME(cache, req) - obj->create_time);
   }
 #endif
+  obj_id_t evicted_id = obj->obj_id;
   if (cache->prefetcher && cache->prefetcher->handle_evict) {
     request_t *check_req = new_request();
     check_req->obj_id = obj->obj_id;
@@ -319,10 +335,21 @@ void cache_evict_base(cache_t *cache, cache_obj_t *obj,
     cache_remove_obj_base(cache, obj, remove_from_hashtable);
     cache->prefetcher->handle_evict(cache, check_req);
     my_free(sizeof(request_t), check_req);
+    /* Mithril may give a second chance and re-insert; only count permanent
+     * removals. */
+    if (cache->prefetch_interaction &&
+        hashtable_find_obj_id(cache->hashtable, evicted_id) == NULL) {
+      prefetch_interaction_on_evict(cache->prefetch_interaction, evicted_id,
+                                    cache->n_req);
+    }
     return;
   }
 
   cache_remove_obj_base(cache, obj, remove_from_hashtable);
+  if (cache->prefetch_interaction) {
+    prefetch_interaction_on_evict(cache->prefetch_interaction, evicted_id,
+                                  cache->n_req);
+  }
 }
 
 /**

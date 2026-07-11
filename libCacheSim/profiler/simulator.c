@@ -19,6 +19,7 @@ extern "C" {
 #include "../utils/include/mystr.h"
 #include "libCacheSim/evictionAlgo.h"
 #include "libCacheSim/plugin.h"
+#include "libCacheSim/prefetchInteraction.h"
 
 typedef struct simulator_multithreading_params {
   reader_t *reader;
@@ -132,6 +133,11 @@ static void _simulate(gpointer data, gpointer user_data) {
   result[idx].curr_rtime = req->clock_time;
   result[idx].n_obj = local_cache->n_obj;
   result[idx].occupied_byte = local_cache->occupied_byte;
+
+  if (local_cache->prefetch_interaction) {
+    printf("%s ", local_cache->cache_name);
+    prefetch_interaction_print(local_cache->prefetch_interaction, stdout);
+  }
 
   // report progress
   g_mutex_lock(&(params->mtx));

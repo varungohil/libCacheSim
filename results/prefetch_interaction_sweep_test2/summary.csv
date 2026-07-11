@@ -1,0 +1,2 @@
+eviction,prefetcher,cache_size,interaction_window,miss_ratio,byte_miss_ratio,n_req,n_prefetch,n_prefetch_then_evict,n_evict,n_evict_then_prefetch,log_path,status
+lru,PG,4mb,100,0.5825,0.8728,100000,300,0,58121,172,/users/varuncg/libCacheSim/results/prefetch_interaction_sweep_test2/logs/lru__PG__4mb__w100.log,ok

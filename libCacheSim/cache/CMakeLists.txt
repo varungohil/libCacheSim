@@ -123,6 +123,7 @@ set(prefetch_sources_c
     prefetch/Mithril.c
     prefetch/OBL.c
     prefetch/PG.c
+    prefetch/prefetchInteraction.c
 )
 
 # ==============================================================================

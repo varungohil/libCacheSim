@@ -19,6 +19,7 @@
 #include "logging.h"
 #include "macro.h"
 #include "prefetchAlgo.h"
+#include "prefetchInteraction.h"
 #include "request.h"
 
 #ifdef __cplusplus
@@ -112,6 +113,9 @@ struct cache {
   admissioner_t *admissioner;
 
   struct prefetcher *prefetcher;
+
+  /* optional; set when prefetch interaction windows are configured */
+  prefetch_interaction_tracker_t *prefetch_interaction;
 
   void *eviction_params;
 

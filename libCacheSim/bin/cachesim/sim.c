@@ -1,4 +1,5 @@
 #include "libCacheSim/cache.h"
+#include "libCacheSim/prefetchInteraction.h"
 #include "libCacheSim/reader.h"
 #include "utils/include/mymath.h"
 #include "utils/include/mystr.h"
@@ -106,6 +107,9 @@ void simulate(reader_t *reader, cache_t *cache, int report_interval,
   snprintf(output_str + n, sizeof(output_str) - n, ", throughput %.2lf MQPS\n",
            (double)req_cnt / 1000000.0 / runtime);
   printf("%s", output_str);
+  if (cache->prefetch_interaction) {
+    prefetch_interaction_print(cache->prefetch_interaction, stdout);
+  }
   char *output_dir = rindex(ofilepath, '/');
   if (output_dir != NULL) {
     size_t dir_length = output_dir - ofilepath;
