@@ -162,6 +162,21 @@ You can use `-p` or `--prefetch` to set the prefetching algorithm.
 ./cachesim ../data/trace.vscsi vscsi lru 1gb -p Mithril
 ```
 
+Optional prefetch interaction stats (request-window based):
+```bash
+# both windows = 100 requests
+./cachesim ../data/trace.vscsi vscsi lru 1gb -p PG \
+  --prefetch-params="interaction-window=100"
+
+# or set them separately
+./cachesim ../data/trace.vscsi vscsi lru 1gb -p PG \
+  --prefetch-params="prefetch-evict-window=1000,evict-prefetch-window=10"
+```
+- `prefetch-evict-window` (W_future): count prefetches that are evicted unused within W requests
+- `evict-prefetch-window` (W_history): count evictions that are prefetched again within W requests
+- Prefetch→evict is further split into **then miss** (later demand miss), **no later demand**, and **reinserted then hit**; a log2 histogram of evict→miss distances is printed
+- Evict→prefetch is further split into **useful** (later demand hit) and **useless** (never used)
+
 ### Advanced features
 ```bash
 # change number of threads

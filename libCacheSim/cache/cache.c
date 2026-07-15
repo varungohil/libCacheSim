@@ -199,9 +199,14 @@ cache_obj_t *cache_find_base(cache_t *cache, const request_t *req,
     cache->prefetcher->handle_find(cache, req, hit);
   }
 
-  if (update_cache && cache_obj != NULL && cache->prefetch_interaction) {
-    prefetch_interaction_on_demand_hit(cache->prefetch_interaction,
-                                       req->obj_id);
+  if (update_cache && cache->prefetch_interaction) {
+    if (cache_obj != NULL) {
+      prefetch_interaction_on_demand_hit(cache->prefetch_interaction,
+                                         req->obj_id);
+    } else {
+      prefetch_interaction_on_demand_miss(cache->prefetch_interaction,
+                                          req->obj_id, cache->n_req);
+    }
   }
 
   if (cache_obj != NULL) {

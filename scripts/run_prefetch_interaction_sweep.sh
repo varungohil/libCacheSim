@@ -216,10 +216,24 @@ mkdir -p "${OUTDIR}/logs"
 SUMMARY_CSV="${OUTDIR}/summary.csv"
 PROGRESS_FILE="${OUTDIR}/progress.txt"
 
-# CSV header
+SUMMARY_HEADER="trace,trace_type,eviction,prefetcher,cache_size,interaction_window,miss_ratio,byte_miss_ratio,n_req,n_prefetch,n_prefetch_then_evict,n_prefetch_then_evict_then_miss,n_prefetch_then_evict_no_demand,n_prefetch_then_evict_then_hit,n_evict,n_evict_then_prefetch,n_evict_then_useful_prefetch,n_evict_then_useless_prefetch,log_path,status"
+
+# Create or upgrade CSV header if missing / outdated (appends used to keep old header).
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
-  echo "trace,trace_type,eviction,prefetcher,cache_size,interaction_window,miss_ratio,byte_miss_ratio,n_req,n_prefetch,n_prefetch_then_evict,n_evict,n_evict_then_prefetch,log_path,status" \
-    > "${SUMMARY_CSV}"
+  echo "${SUMMARY_HEADER}" > "${SUMMARY_CSV}"
+else
+  cur_header="$(head -n 1 "${SUMMARY_CSV}" || true)"
+  if [[ "${cur_header}" != "${SUMMARY_HEADER}" ]]; then
+    echo "WARNING: upgrading ${SUMMARY_CSV} header to latest interaction columns" >&2
+    tmp_csv="${SUMMARY_CSV}.header_upgrade.tmp"
+    {
+      echo "${SUMMARY_HEADER}"
+      # Drop old header line; leave data rows as-is (may still be short/long —
+      # prefer re-running or scripts that normalize field counts).
+      tail -n +2 "${SUMMARY_CSV}"
+    } > "${tmp_csv}"
+    mv "${tmp_csv}" "${SUMMARY_CSV}"
+  fi
 fi
 
 sanitize() {
@@ -286,7 +300,9 @@ run_one() {
   fi
 
   local miss_ratio="" byte_miss_ratio="" n_req=""
-  local n_prefetch="" n_pf_evict="" n_evict="" n_ev_pf=""
+  local n_prefetch="" n_pf_evict="" n_pf_evict_miss="" n_pf_evict_nodemand=""
+  local n_pf_evict_hit="" n_evict="" n_ev_pf=""
+  local n_ev_pf_useful="" n_ev_pf_useless=""
 
   local result_line
   result_line="$(grep -E 'miss ratio' "${log}" | grep -v 'interval miss' | tail -n 1 || true)"
@@ -303,12 +319,18 @@ run_one() {
   if grep -q 'prefetch interaction' "${log}"; then
     n_prefetch="$(awk '/prefetches:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
     n_pf_evict="$(awk '/prefetch.*evict \(unused\):/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
+    n_pf_evict_miss="$(awk '/then miss:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
+    n_pf_evict_nodemand="$(awk '/no later demand:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
+    n_pf_evict_hit="$(awk '/reinserted then hit:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
     n_evict="$(awk '/^[[:space:]]*evictions:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
-    n_ev_pf="$(awk '/evict.*prefetch:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
+    # Match the top-level "evict→prefetch:" line, not the nested useful/useless lines.
+    n_ev_pf="$(awk '/^[[:space:]]*evict.*prefetch:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
+    n_ev_pf_useful="$(awk '/useful \(demand hit\):/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
+    n_ev_pf_useless="$(awk '/useless \(never used\):/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}' "${log}" | tail -n1)"
   fi
 
   local row
-  row="$(basename "${trace_path}"),${ttype},${eviction},${prefetcher},${size},${window},${miss_ratio},${byte_miss_ratio},${n_req},${n_prefetch},${n_pf_evict},${n_evict},${n_ev_pf},${log},${status}"
+  row="$(basename "${trace_path}"),${ttype},${eviction},${prefetcher},${size},${window},${miss_ratio},${byte_miss_ratio},${n_req},${n_prefetch},${n_pf_evict},${n_pf_evict_miss},${n_pf_evict_nodemand},${n_pf_evict_hit},${n_evict},${n_ev_pf},${n_ev_pf_useful},${n_ev_pf_useless},${log},${status}"
   if command -v flock >/dev/null 2>&1; then
     (
       flock 9
