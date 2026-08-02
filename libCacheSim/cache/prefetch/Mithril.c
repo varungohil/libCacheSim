@@ -374,7 +374,8 @@ void Mithril_prefetch(cache_t *cache, const request_t *req) {
 
       if (cache->prefetch_interaction) {
         prefetch_interaction_on_prefetch(cache->prefetch_interaction,
-                                         new_req->obj_id, cache->n_req);
+                                         new_req->obj_id, cache->n_req,
+                                         req->clock_time);
       }
 
       if (Mithril_params->output_statistics) {
@@ -410,7 +411,8 @@ void Mithril_prefetch(cache_t *cache, const request_t *req) {
 
     if (cache->prefetch_interaction) {
       prefetch_interaction_on_prefetch(cache->prefetch_interaction,
-                                       new_req->obj_id, cache->n_req);
+                                       new_req->obj_id, cache->n_req,
+                                       req->clock_time);
     }
 
     if (Mithril_params->output_statistics) {

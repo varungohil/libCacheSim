@@ -12,17 +12,22 @@
 extern "C" {
 #endif
 
+#define PIT_DEFAULT_INTENSITY_BUCKET_SEC 60
+
 bool prefetch_interaction_is_param_key(const char *key) {
   return strcasecmp(key, "interaction-window") == 0 ||
          strcasecmp(key, "prefetch-evict-window") == 0 ||
-         strcasecmp(key, "evict-prefetch-window") == 0;
+         strcasecmp(key, "evict-prefetch-window") == 0 ||
+         strcasecmp(key, "intensity-time-bucket") == 0;
 }
 
 static void parse_windows_from_params(const char *params,
                                       int64_t *prefetch_evict_window,
-                                      int64_t *evict_prefetch_window) {
+                                      int64_t *evict_prefetch_window,
+                                      int64_t *intensity_time_bucket) {
   *prefetch_evict_window = 0;
   *evict_prefetch_window = 0;
+  *intensity_time_bucket = -1; /* default when tracking is on */
   if (params == NULL || params[0] == '\0') {
     return;
   }
@@ -46,6 +51,8 @@ static void parse_windows_from_params(const char *params,
       *prefetch_evict_window = (int64_t)atoll(value);
     } else if (strcasecmp(key, "evict-prefetch-window") == 0) {
       *evict_prefetch_window = (int64_t)atoll(value);
+    } else if (strcasecmp(key, "intensity-time-bucket") == 0) {
+      *intensity_time_bucket = (int64_t)atoll(value);
     }
   }
   free(params_str);
@@ -71,10 +78,99 @@ static pit_pending_t *new_pending(int64_t vtime, bool from_evict_reprefetch) {
   return p;
 }
 
+static void note_clock(prefetch_interaction_tracker_t *t, int64_t clock_time) {
+  if (t == NULL) {
+    return;
+  }
+  t->last_clock_time = clock_time;
+  if (t->intensity_time_bucket <= 0) {
+    return;
+  }
+  if (t->clock_origin < 0) {
+    t->clock_origin = clock_time;
+  }
+}
+
+static pit_intensity_bucket_t *intensity_bucket_for(
+    prefetch_interaction_tracker_t *t, int64_t clock_time) {
+  if (t == NULL || t->intensity_time_bucket <= 0) {
+    return NULL;
+  }
+  note_clock(t, clock_time);
+  if (t->clock_origin < 0) {
+    t->clock_origin = clock_time;
+  }
+  int64_t delta = clock_time - t->clock_origin;
+  if (delta < 0) {
+    delta = 0;
+  }
+  size_t idx = (size_t)(delta / t->intensity_time_bucket);
+  if (idx >= PIT_INTENSITY_MAX_BUCKETS) {
+    idx = PIT_INTENSITY_MAX_BUCKETS - 1;
+  }
+  if (idx >= t->intensity_buckets_cap) {
+    size_t new_cap =
+        t->intensity_buckets_cap == 0 ? 64 : t->intensity_buckets_cap;
+    while (new_cap <= idx) {
+      new_cap *= 2;
+      if (new_cap > PIT_INTENSITY_MAX_BUCKETS) {
+        new_cap = PIT_INTENSITY_MAX_BUCKETS;
+        break;
+      }
+    }
+    pit_intensity_bucket_t *nb = (pit_intensity_bucket_t *)realloc(
+        t->intensity_buckets, new_cap * sizeof(pit_intensity_bucket_t));
+    if (nb == NULL) {
+      return NULL;
+    }
+    memset(nb + t->intensity_buckets_cap, 0,
+           (new_cap - t->intensity_buckets_cap) *
+               sizeof(pit_intensity_bucket_t));
+    t->intensity_buckets = nb;
+    t->intensity_buckets_cap = new_cap;
+  }
+  if (idx + 1 > t->n_intensity_buckets) {
+    t->n_intensity_buckets = idx + 1;
+  }
+  return &t->intensity_buckets[idx];
+}
+
+static void intensity_count_req(prefetch_interaction_tracker_t *t,
+                                int64_t clock_time) {
+  pit_intensity_bucket_t *b = intensity_bucket_for(t, clock_time);
+  if (b != NULL) {
+    b->n_req++;
+  }
+}
+
+static void intensity_count_pf_miss(prefetch_interaction_tracker_t *t,
+                                    int64_t clock_time) {
+  pit_intensity_bucket_t *b = intensity_bucket_for(t, clock_time);
+  if (b != NULL) {
+    b->n_pf_evict_miss++;
+  }
+}
+
+static void intensity_count_ev_useless(prefetch_interaction_tracker_t *t) {
+  if (t == NULL || t->intensity_time_bucket <= 0) {
+    return;
+  }
+  int64_t clock_time =
+      t->last_clock_time >= 0 ? t->last_clock_time : t->clock_origin;
+  if (clock_time < 0) {
+    clock_time = 0;
+  }
+  pit_intensity_bucket_t *b = intensity_bucket_for(t, clock_time);
+  if (b != NULL) {
+    b->n_ev_useless++;
+  }
+}
+
 static void mark_evict_reprefetch_useless(prefetch_interaction_tracker_t *t,
                                           pit_pending_t *pending) {
   if (pending != NULL && pending->from_evict_reprefetch) {
     t->n_evict_then_useless_prefetch++;
+    intensity_count_ev_useless(t);
     pending->from_evict_reprefetch = false;
   }
 }
@@ -137,7 +233,8 @@ static void watch_pf_evict_outcome(prefetch_interaction_tracker_t *t,
  * kind: 0 = miss (+hist), 1 = no demand, 2 = reinserted then hit.
  */
 static void resolve_pf_evict_watches(prefetch_interaction_tracker_t *t,
-                                     obj_id_t obj_id, int64_t now, int kind) {
+                                     obj_id_t obj_id, int64_t now, int kind,
+                                     int64_t clock_time) {
   if (t->awaiting_pf_evict_outcome == NULL) {
     return;
   }
@@ -151,6 +248,7 @@ static void resolve_pf_evict_watches(prefetch_interaction_tracker_t *t,
     if (kind == 0) {
       t->n_prefetch_then_evict_then_miss++;
       record_miss_distance(t, now - e->vtime);
+      intensity_count_pf_miss(t, clock_time);
     } else if (kind == 1) {
       t->n_prefetch_then_evict_no_demand++;
     } else {
@@ -168,13 +266,14 @@ static void finalize_pf_evict_outcomes(prefetch_interaction_tracker_t *t) {
   GList *keys = g_hash_table_get_keys(t->awaiting_pf_evict_outcome);
   for (GList *node = keys; node != NULL; node = node->next) {
     obj_id_t obj_id = (obj_id_t)GPOINTER_TO_SIZE(node->data);
-    resolve_pf_evict_watches(t, obj_id, 0, /*no demand*/ 1);
+    resolve_pf_evict_watches(t, obj_id, 0, /*no demand*/ 1, t->last_clock_time);
   }
   g_list_free(keys);
 }
 
 prefetch_interaction_tracker_t *prefetch_interaction_create(
-    int64_t prefetch_evict_window, int64_t evict_prefetch_window) {
+    int64_t prefetch_evict_window, int64_t evict_prefetch_window,
+    int64_t intensity_time_bucket) {
   if (prefetch_evict_window <= 0 && evict_prefetch_window <= 0) {
     return NULL;
   }
@@ -186,6 +285,14 @@ prefetch_interaction_tracker_t *prefetch_interaction_create(
       prefetch_evict_window > 0 ? prefetch_evict_window : 0;
   t->evict_prefetch_window =
       evict_prefetch_window > 0 ? evict_prefetch_window : 0;
+
+  if (intensity_time_bucket < 0) {
+    t->intensity_time_bucket = PIT_DEFAULT_INTENSITY_BUCKET_SEC;
+  } else {
+    t->intensity_time_bucket = intensity_time_bucket;
+  }
+  t->clock_origin = -1;
+  t->last_clock_time = -1;
 
   /* Always track pending prefetches when either window is on so we can
    * classify evict→prefetch useful vs useless via demand hits / unused
@@ -208,10 +315,12 @@ prefetch_interaction_tracker_t *prefetch_interaction_create_from_params(
     const char *params) {
   int64_t prefetch_evict_window = 0;
   int64_t evict_prefetch_window = 0;
+  int64_t intensity_time_bucket = -1;
   parse_windows_from_params(params, &prefetch_evict_window,
-                            &evict_prefetch_window);
+                            &evict_prefetch_window, &intensity_time_bucket);
   return prefetch_interaction_create(prefetch_evict_window,
-                                     evict_prefetch_window);
+                                     evict_prefetch_window,
+                                     intensity_time_bucket);
 }
 
 prefetch_interaction_tracker_t *prefetch_interaction_clone(
@@ -220,7 +329,8 @@ prefetch_interaction_tracker_t *prefetch_interaction_clone(
     return NULL;
   }
   return prefetch_interaction_create(src->prefetch_evict_window,
-                                     src->evict_prefetch_window);
+                                     src->evict_prefetch_window,
+                                     src->intensity_time_bucket);
 }
 
 void prefetch_interaction_free(prefetch_interaction_tracker_t *t) {
@@ -243,6 +353,7 @@ void prefetch_interaction_free(prefetch_interaction_tracker_t *t) {
     }
     g_queue_free(t->eviction_order);
   }
+  free(t->intensity_buckets);
   free(t);
 }
 
@@ -291,10 +402,12 @@ static void prune_pending_prefetches(prefetch_interaction_tracker_t *t,
 }
 
 void prefetch_interaction_on_prefetch(prefetch_interaction_tracker_t *t,
-                                      obj_id_t obj_id, int64_t vtime) {
+                                      obj_id_t obj_id, int64_t vtime,
+                                      int64_t clock_time) {
   if (t == NULL) {
     return;
   }
+  note_clock(t, clock_time);
   t->n_prefetch++;
 
   bool from_evict_reprefetch = false;
@@ -329,10 +442,11 @@ void prefetch_interaction_on_prefetch(prefetch_interaction_tracker_t *t,
 }
 
 void prefetch_interaction_on_demand_hit(prefetch_interaction_tracker_t *t,
-                                        obj_id_t obj_id) {
+                                        obj_id_t obj_id, int64_t clock_time) {
   if (t == NULL) {
     return;
   }
+  intensity_count_req(t, clock_time);
   if (t->pending_prefetches != NULL) {
     pit_pending_t *pending = (pit_pending_t *)g_hash_table_lookup(
         t->pending_prefetches, GSIZE_TO_POINTER(obj_id));
@@ -346,15 +460,17 @@ void prefetch_interaction_on_demand_hit(prefetch_interaction_tracker_t *t,
   }
   /* Object is in cache → prior unused pf→evicts were followed by reinsert
    * (prefetch or otherwise) without a demand miss. */
-  resolve_pf_evict_watches(t, obj_id, 0, /*reinsert hit*/ 2);
+  resolve_pf_evict_watches(t, obj_id, 0, /*reinsert hit*/ 2, clock_time);
 }
 
 void prefetch_interaction_on_demand_miss(prefetch_interaction_tracker_t *t,
-                                         obj_id_t obj_id, int64_t vtime) {
+                                         obj_id_t obj_id, int64_t vtime,
+                                         int64_t clock_time) {
   if (t == NULL) {
     return;
   }
-  resolve_pf_evict_watches(t, obj_id, vtime, /*miss*/ 0);
+  intensity_count_req(t, clock_time);
+  resolve_pf_evict_watches(t, obj_id, vtime, /*miss*/ 0, clock_time);
 }
 
 void prefetch_interaction_on_evict(prefetch_interaction_tracker_t *t,
@@ -477,6 +593,32 @@ void prefetch_interaction_print(prefetch_interaction_tracker_t *t, FILE *out) {
   }
   if (!any) {
     fprintf(out, "    (empty)\n");
+  }
+
+  if (t->intensity_time_bucket > 0 && t->n_intensity_buckets > 0 &&
+      t->intensity_buckets != NULL && t->clock_origin >= 0) {
+    fprintf(out,
+            "  global intensity vs clock_time "
+            "(bucket_sec=%lld, clock_origin=%lld):\n"
+            "    clock_start,n_req,n_pf_evict_miss,n_ev_useless,intensity_pct\n",
+            (long long)t->intensity_time_bucket, (long long)t->clock_origin);
+    for (size_t i = 0; i < t->n_intensity_buckets; i++) {
+      pit_intensity_bucket_t *b = &t->intensity_buckets[i];
+      if (b->n_req == 0 && b->n_pf_evict_miss == 0 && b->n_ev_useless == 0) {
+        continue;
+      }
+      int64_t clock_start =
+          t->clock_origin + (int64_t)i * t->intensity_time_bucket;
+      double intensity =
+          b->n_req > 0 ? 100.0 *
+                             (double)(b->n_pf_evict_miss + b->n_ev_useless) /
+                             (double)b->n_req
+                       : 0.0;
+      fprintf(out, "    %lld,%llu,%llu,%llu,%.6f\n", (long long)clock_start,
+              (unsigned long long)b->n_req,
+              (unsigned long long)b->n_pf_evict_miss,
+              (unsigned long long)b->n_ev_useless, intensity);
+    }
   }
 }
 

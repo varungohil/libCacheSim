@@ -13,6 +13,10 @@
 //     - useless: that re-prefetch was never demand-hit (evicted unused or
 //                still unused at end of simulation)
 //
+// Optional: global intensity vs trace clock_time, bucketed by
+//   intensity-time-bucket=<seconds> (default 60 when tracking is on; 0 disables).
+//   intensity = (pf→evict→miss + ev→useless) / n_req  within each bucket.
+//
 
 #pragma once
 
@@ -30,6 +34,15 @@ extern "C" {
 
 /** Number of log2 distance histogram bins: covers [1, 2^N). */
 #define PIT_MISS_DIST_NBINS 40
+
+/** Hard cap on clock-time intensity buckets (guards bad timestamps). */
+#define PIT_INTENSITY_MAX_BUCKETS 1000000
+
+typedef struct {
+  uint64_t n_req;
+  uint64_t n_pf_evict_miss;
+  uint64_t n_ev_useless;
+} pit_intensity_bucket_t;
 
 typedef struct {
   int64_t vtime;
@@ -65,6 +78,14 @@ typedef struct {
    * Bin i covers distances in [2^i, 2^{i+1}). Distances >= 2^NBINS go in
    * the last bin. */
   uint64_t miss_dist_hist[PIT_MISS_DIST_NBINS];
+
+  /* Global intensity vs trace clock_time (seconds). 0 = disabled. */
+  int64_t intensity_time_bucket;
+  int64_t clock_origin; /* first observed clock_time; -1 if unset */
+  int64_t last_clock_time;
+  pit_intensity_bucket_t *intensity_buckets;
+  size_t n_intensity_buckets;
+  size_t intensity_buckets_cap;
 } prefetch_interaction_tracker_t;
 
 typedef struct {
@@ -74,14 +95,17 @@ typedef struct {
 
 /**
  * @brief Create a tracker. Both windows 0 => returns NULL (disabled).
+ *        intensity_time_bucket: seconds per bucket; <0 means default (60);
+ *        0 disables clock-time intensity series.
  */
 prefetch_interaction_tracker_t *prefetch_interaction_create(
-    int64_t prefetch_evict_window, int64_t evict_prefetch_window);
+    int64_t prefetch_evict_window, int64_t evict_prefetch_window,
+    int64_t intensity_time_bucket);
 
 /**
  * @brief Parse interaction-window / prefetch-evict-window /
- *        evict-prefetch-window from a prefetch-params string.
- *        Returns NULL if disabled or params is NULL.
+ *        evict-prefetch-window / intensity-time-bucket from a prefetch-params
+ *        string. Returns NULL if disabled or params is NULL.
  */
 prefetch_interaction_tracker_t *prefetch_interaction_create_from_params(
     const char *params);
@@ -93,14 +117,16 @@ prefetch_interaction_tracker_t *prefetch_interaction_clone(
 void prefetch_interaction_free(prefetch_interaction_tracker_t *t);
 
 void prefetch_interaction_on_prefetch(prefetch_interaction_tracker_t *t,
-                                      obj_id_t obj_id, int64_t vtime);
+                                      obj_id_t obj_id, int64_t vtime,
+                                      int64_t clock_time);
 
 void prefetch_interaction_on_demand_hit(prefetch_interaction_tracker_t *t,
-                                        obj_id_t obj_id);
+                                        obj_id_t obj_id, int64_t clock_time);
 
 /** Demand request that missed (object not in cache). */
 void prefetch_interaction_on_demand_miss(prefetch_interaction_tracker_t *t,
-                                         obj_id_t obj_id, int64_t vtime);
+                                         obj_id_t obj_id, int64_t vtime,
+                                         int64_t clock_time);
 
 void prefetch_interaction_on_evict(prefetch_interaction_tracker_t *t,
                                    obj_id_t obj_id, int64_t vtime);

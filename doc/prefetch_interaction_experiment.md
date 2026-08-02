@@ -13,7 +13,7 @@ These effects are usually invisible in miss-ratio alone. This experiment adds co
 
 ## Metrics
 
-All times are in **request virtual time** (`cache->n_req`), not wall clock.
+Interaction windows use **request virtual time** (`cache->n_req`). Optionally, **global intensity vs trace clock_time** is also recorded in fixed-width buckets of `req->clock_time` (see below).
 
 Given an interaction window \(W\) (in requests):
 
@@ -80,7 +80,44 @@ Implementation: `libCacheSim/cache/prefetch/prefetchInteraction.c`, hooked from 
 --prefetch-params="interaction-window=100"
 # or separately:
 --prefetch-params="prefetch-evict-window=1000,evict-prefetch-window=10"
+# optional clock-time intensity series (default bucket=60s when tracking is on; 0 disables):
+--prefetch-params="interaction-window=1000,intensity-time-bucket=60"
 ```
+
+**Global intensity vs clock_time.** When enabled, each run prints a CSV-like block:
+
+```
+global intensity vs clock_time (bucket_sec=60, clock_origin=...):
+  clock_start,n_req,n_pf_evict_miss,n_ev_useless,intensity_pct
+  ...
+```
+
+Per bucket (as printed in the log):
+
+\[
+\text{intensity\%}
+= 100 \cdot \frac{\texttt{n\_pf\_evict\_miss} + \texttt{n\_ev\_useless}}{\texttt{n\_req}}
+\]
+
+Plots rewrite each point as a share of the **entire-trace** request count
+(\(\texttt{n\_req}\) from the run summary), so sparse buckets cannot exceed
+100% of the trace:
+
+\[
+\text{intensity\% of trace}
+= 100 \cdot \frac{\texttt{n\_pf\_evict\_miss} + \texttt{n\_ev\_useless}}{\texttt{n\_req}^{\text{trace}}}
+\]
+
+Harmful events are attributed at classification time (demand miss for pf→evict→miss; current request clock for useless re-prefetch). Plot with:
+
+```bash
+./scripts/plot_global_intensity_vs_clock.py \
+  --summary ./results/cp_sweep_intensity/summary.csv \
+  --outdir ./results/cp_sweep_intensity/plots/intensity_vs_clock \
+  --traces w35 --sizes 64mb --windows 1000
+```
+
+Existing logs without this block need a re-run with a current `cachesim`.
 
 ## Experimental setup
 
@@ -238,11 +275,12 @@ For algorithm work, these metrics are useful when:
 | `cloudphysics/request_counts.csv` | Per-trace request counts |
 | `scripts/run_prefetch_interaction_sweep.sh` | Sweep driver |
 | `scripts/plot_prefetch_interactions.py` | Plotting script |
+| `scripts/plot_global_intensity_vs_clock.py` | Global intensity vs `clock_time` plots |
 | `libCacheSim/cache/prefetch/prefetchInteraction.c` | Tracker implementation |
 
 ## Limitations
 
-- Interaction windows treat “immediate” as a fixed request distance; wall-clock immediacy is not modeled.
+- Interaction windows treat “immediate” as a fixed request distance; wall-clock immediacy is not used for \(W\). Intensity-vs-time buckets use `req->clock_time` (trace timestamps), not simulator wall clock.
 - Percentages with very few prefetches are noisy; analyses above typically filter `n_prefetch ≥ 100` (or ≥1000 for rate leaderboards).
 - `s3fifo` appears in the sweep CSV but was excluded from some aggregate combo tables when focusing on the common LRU/FIFO/sieve × prefetcher grid used for ranking; re-run ranking including `s3fifo` if needed.
 - OBL is aimed at sequential block access; many CloudPhysics volumes may not stress it the same way as Mithril/PG.

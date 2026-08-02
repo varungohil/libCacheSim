@@ -141,7 +141,8 @@ static void OBL_prefetch(cache_t *cache, const request_t *req) {
     cache->insert(cache, new_req);
     if (cache->prefetch_interaction) {
       prefetch_interaction_on_prefetch(cache->prefetch_interaction,
-                                       new_req->obj_id, cache->n_req);
+                                       new_req->obj_id, cache->n_req,
+                                       req->clock_time);
     }
     free_request(new_req);
   }

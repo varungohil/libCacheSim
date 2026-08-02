@@ -202,10 +202,11 @@ cache_obj_t *cache_find_base(cache_t *cache, const request_t *req,
   if (update_cache && cache->prefetch_interaction) {
     if (cache_obj != NULL) {
       prefetch_interaction_on_demand_hit(cache->prefetch_interaction,
-                                         req->obj_id);
+                                         req->obj_id, req->clock_time);
     } else {
       prefetch_interaction_on_demand_miss(cache->prefetch_interaction,
-                                          req->obj_id, cache->n_req);
+                                          req->obj_id, cache->n_req,
+                                          req->clock_time);
     }
   }
 
