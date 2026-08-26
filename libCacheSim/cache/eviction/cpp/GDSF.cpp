@@ -116,6 +116,11 @@ static bool GDSF_get(cache_t *cache, const request_t *req) {
     }
   }
 
+  /* GDSF uses a custom get path (not cache_get_base); still run prefetch. */
+  if (cache->prefetcher && cache->prefetcher->prefetch) {
+    cache->prefetcher->prefetch(cache, req);
+  }
+
   DEBUG_ASSERT((int64_t)gdsf->pq.size() == cache->n_obj);
   DEBUG_ASSERT((int64_t)gdsf->pq_map.size() == cache->n_obj);
 
@@ -140,7 +145,10 @@ static bool GDSF_get(cache_t *cache, const request_t *req) {
  */
 static cache_obj_t *GDSF_find(cache_t *cache, const request_t *req,
                               bool update_cache) {
-  cache->n_req += 1;
+  /* Only count demand requests; prefetch probes use update_cache=false. */
+  if (update_cache) {
+    cache->n_req += 1;
+  }
 
   auto *gdsf = reinterpret_cast<eviction::GDSF *>(cache->eviction_params);
   cache_obj_t *obj = cache_find_base(cache, req, update_cache);
@@ -278,7 +286,7 @@ static void GDSF_evict(cache_t *cache, const request_t *req) {
   cache_obj_t *obj = p.obj;
 
   gdsf->pri_last_evict = p.priority;
-  cache_remove_obj_base(cache, obj, true);
+  cache_evict_base(cache, obj, true);
 }
 
 static void GDSF_remove_obj(cache_t *cache, cache_obj_t *obj) {

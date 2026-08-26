@@ -232,18 +232,33 @@ static cache_obj_t *S3FIFO_find(cache_t *cache, const request_t *req,
   cache_obj_t *obj = params->small_fifo->find(params->small_fifo, req, true);
   if (obj != NULL) {
     obj->S3FIFO.freq += 1;
-    return obj;
+  } else {
+    if (params->ghost_fifo != NULL &&
+        params->ghost_fifo->remove(params->ghost_fifo, req->obj_id)) {
+      // if object in ghost_fifo, remove will return true
+      params->hit_on_ghost = true;
+    }
+
+    obj = params->main_fifo->find(params->main_fifo, req, true);
+    if (obj != NULL) {
+      obj->S3FIFO.freq += 1;
+    }
   }
 
-  if (params->ghost_fifo != NULL &&
-      params->ghost_fifo->remove(params->ghost_fifo, req->obj_id)) {
-    // if object in ghost_fifo, remove will return true
-    params->hit_on_ghost = true;
+  /* S3FIFO does not use cache_find_base (objects live in child FIFOs), so
+   * invoke prefetcher / interaction hooks here for demand requests. */
+  if (cache->prefetcher && cache->prefetcher->handle_find) {
+    cache->prefetcher->handle_find(cache, req, obj != NULL);
   }
-
-  obj = params->main_fifo->find(params->main_fifo, req, true);
-  if (obj != NULL) {
-    obj->S3FIFO.freq += 1;
+  if (cache->prefetch_interaction) {
+    if (obj != NULL) {
+      prefetch_interaction_on_demand_hit(cache->prefetch_interaction,
+                                         req->obj_id, req->clock_time);
+    } else {
+      prefetch_interaction_on_demand_miss(cache->prefetch_interaction,
+                                          req->obj_id, cache->n_req,
+                                          req->clock_time);
+    }
   }
 
   return obj;
