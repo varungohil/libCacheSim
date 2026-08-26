@@ -1,0 +1,2 @@
+./cloudphysics/w105.oracleGeneral.bin.zst S3FIFO-0.1000-2 cache size   177MiB,          3375344 req, miss ratio 0.7438, byte miss ratio 0.9393, throughput 0.89 MQPS
+./cloudphysics/w105.oracleGeneral.bin.zst S3FIFO-0.1000-2 cache size   177MiB,          3375344 req, miss ratio 0.7438, byte miss ratio 0.9393, throughput 0.92 MQPS
