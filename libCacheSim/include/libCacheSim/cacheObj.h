@@ -108,6 +108,13 @@ typedef struct {
 } SLRU_obj_metadata_t;
 
 typedef struct {
+  // written on every queue entry for uniformity; Adjust() never reads it
+  // for objects in queue 0 (there is no lower queue to demote to)
+  int64_t expire_time;
+  int16_t queue_id;
+} MQ_obj_metadata_t;
+
+typedef struct {
   int64_t last_access_vtime;
   int64_t insertion_time;
   int32_t oracle_idx;
@@ -131,6 +138,20 @@ typedef struct {
   int64_t freq;
   int32_t main_insert_freq;
 } S3FIFO_obj_metadata_t;
+
+// Merlin's bounded frequency and ghost/staging overlap marker.
+typedef struct {
+  uint8_t freq;
+  bool inghost;
+} MERLIN_obj_metadata_t;
+
+typedef struct {
+  int64_t insert_seq;  // insert sequence number (of whichever sub-FIFO the
+                       // object currently lives in), at insertion time
+  int32_t freq;
+  int32_t insert_bucket;  // ghost FIFO only: histogram bucket at insertion,
+                          // used by the optional learned control plane
+} S4FIFO_obj_metadata_t;
 
 typedef struct {
   // int32_t freq;
@@ -188,9 +209,12 @@ typedef struct cache_obj {
     FIFO_Reinsertion_obj_metadata_t FIFO_Reinsertion;
     SFIFO_obj_metadata_t SFIFO;
     SLRU_obj_metadata_t SLRU;
+    MQ_obj_metadata_t MQ;
     QDLP_obj_metadata_t QDLP;
     LIRS_obj_metadata_t LIRS;
     S3FIFO_obj_metadata_t S3FIFO;
+    MERLIN_obj_metadata_t MERLIN;
+    S4FIFO_obj_metadata_t S4FIFO;
     Sieve_obj_params_t sieve;
     CAR_obj_metadata_t CAR;
     Clock2QPlus_obj_metadata_t Clock2QPlus;

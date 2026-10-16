@@ -6,6 +6,7 @@
 - [Trace Analyzer](quickstart_traceAnalyzer.md)
 - [MRC Profiler](quickstart_mrcProfiler.md)
 - [Plugin System](quickstart_plugin.md)
+- ⭐ [Python Binding (easy API access)](https://github.com/1a1a11a/libCacheSim-python)
 
 ## Advanced Usage
 - [Library Usage Guide](advanced_lib.md)
@@ -17,3 +18,12 @@
 ## Developer Documentation
 - [Debugging Guide](debug.md)
 - [Install & Build](install.md)
+- [Contributing](/CONTRIBUTING.md)
+
+## Project
+- [Adoption Census (who outside the project uses libCacheSim, with sources)](adoption.md)
+
+## Help
+- [FAQ](/FAQ.md)
+- [Issue tracker](https://github.com/1a1a11a/libCacheSim/issues)
+- [Discussions](https://github.com/1a1a11a/libCacheSim/discussions)

@@ -47,6 +47,7 @@ enum argp_option_short {
   OPTION_PREFETCH_ALGO = 'p',
   OPTION_PREFETCH_PARAMS = 0x109,
   OPTION_PRINT_HEAD_REQ = 0x10a,
+  OPTION_HASHPOWER = 0x10b,
 };
 
 /*
@@ -96,6 +97,11 @@ static struct argp_option options[] = {
     {"verbose", OPTION_VERBOSE, "1", 0, "Produce verbose output", 10},
     {"print-head-req", OPTION_PRINT_HEAD_REQ, "false", 0,
      "Print the first few requests", 10},
+    {"hashpower", OPTION_HASHPOWER, "24", 0,
+     "Log2 of the hash table size, default 24 (16M entries). Lower it to save "
+     "memory on small traces. Note that sampling-based algorithms draw "
+     "candidates from the hash table, so their miss ratios depend on this",
+     10},
 
     {0, 0, 0, 0, 0, 0}};
 
@@ -165,6 +171,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
     case OPTION_CONSIDER_OBJ_METADATA:
       arguments->consider_obj_metadata = is_true(arg) ? true : false;
       break;
+    case OPTION_HASHPOWER:
+      arguments->hashpower = atoi(arg);
+      if (arguments->hashpower <= 0 || arguments->hashpower >= 40) {
+        ERROR("hashpower must be between 1 and 39, got %d\n",
+              arguments->hashpower);
+      }
+      break;
     case OPTION_WARMUP_SEC:
       arguments->warmup_sec = atoi(arg);
       break;
@@ -205,7 +218,7 @@ static char doc[] =
     "trace can be zstd compressed\n"
     "cache_size is in byte, but also support KB/MB/GB\n"
     "supported trace_type: txt/csv/twr/vscsi/oracleGeneralBin\n"
-    "supported eviction_algo: LRU/LFU/FIFO/ARC/LeCaR/Cacheus\n"
+    "supported eviction_algo: LRU/LFU/FIFO/ARC/LeCaR/Cacheus/Merlin\n"
     "print-head-req: Print the first few requests when simulating start\n";
 
 /**
@@ -228,6 +241,7 @@ static void init_arg(struct arguments *args) {
   args->use_ttl = false;
   args->ignore_obj_size = false;
   args->consider_obj_metadata = false;
+  args->hashpower = DEFAULT_HASHPOWER;
   args->report_interval = 3600 * 24;
   args->n_thread = n_cores();
   args->warmup_sec = -1;
@@ -344,12 +358,29 @@ void parse_cmd(int argc, char *argv[], struct arguments *args) {
    * the working set size **/
   conv_cache_sizes(args->args[3], args);
 
+  /* so that an eviction parameter can be given as a fraction of the trace
+   * (e.g. s4fifo's feature-collect-reqs) rather than an absolute request
+   * count. Cheap for binary traces (derived from the file size); for txt
+   * and zstd traces it counts on a cloned reader, leaving this one
+   * untouched - reset anyway so nothing downstream depends on that. Only
+   * the algorithms that read it pay for the scan; for everything else it
+   * would be a wasted pass over the whole trace. */
+  int64_t n_total_req = 0;
+  for (int i = 0; i < args->n_eviction_algo; i++) {
+    if (cache_needs_n_total_req(args->eviction_algo[i])) {
+      n_total_req = get_num_of_req(args->reader);
+      reset_reader(args->reader);
+      break;
+    }
+  }
+
   for (int i = 0; i < args->n_eviction_algo; i++) {
     for (int j = 0; j < args->n_cache_size; j++) {
       int idx = i * args->n_cache_size + j;
       args->caches[idx] = create_cache(
           args->trace_path, args->eviction_algo[i], args->cache_sizes[j],
-          args->eviction_params, args->consider_obj_metadata);
+          args->eviction_params, args->consider_obj_metadata, args->hashpower,
+          n_total_req);
 
       if (args->admission_algo != NULL) {
         args->caches[idx]->admissioner =
@@ -546,6 +577,14 @@ void print_parsed_args(struct arguments *args) {
   if (args->eviction_params != NULL)
     n += snprintf(output_str + n, OUTPUT_STR_LEN - n - 1,
                   ", eviction-params: %s", args->eviction_params);
+
+  /* Only when it differs from the default, matching how the other optional
+   * settings below are reported. A non-default hashpower changes the miss
+   * ratio of the policies that draw eviction candidates through the hash
+   * mask, so a run that used one is not comparable to a run that did not. */
+  if (args->hashpower != DEFAULT_HASHPOWER)
+    n += snprintf(output_str + n, OUTPUT_STR_LEN - n - 1, ", hashpower %d",
+                  args->hashpower);
 
   if (args->use_ttl)
     n += snprintf(output_str + n, OUTPUT_STR_LEN - n - 1, ", use ttl");

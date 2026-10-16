@@ -44,6 +44,7 @@ set(eviction_sources_c
         eviction/LRU.c
         eviction/LRUProb.c       # a probabilistic version of LRU
         eviction/LRUv0.c         # an inefficient version but easier to understand
+        eviction/MQ.c
         eviction/MRU.c
         eviction/nop.c
         eviction/plugin_cache.c  # plugin cache that allows user to implement custom cache
@@ -74,6 +75,7 @@ set(eviction_sources_c
 
 # C++ eviction algorithms
 set(eviction_sources_cpp
+        eviction/cpp/merlin.cpp
         eviction/cpp/LFU.cpp
         eviction/cpp/GDSF.cpp
         eviction/cpp/LRU_K.cpp
@@ -91,9 +93,19 @@ endif()
 
 # 3L Cache
 if (ENABLE_3L_CACHE)
-    set (eviction_sources_cpp ${eviction_sources_cpp} 
+    set (eviction_sources_cpp ${eviction_sources_cpp}
         eviction/3LCache/ThreeLCache_Interface.cpp
         eviction/3LCache/ThreeLCache.cpp
+        )
+endif()
+
+# S4FIFO: plain C throughout, including its model, so no ML runtime
+# dependency and no eviction_sources_cpp entry.
+if (ENABLE_S4FIFO)
+    set(eviction_sources_c ${eviction_sources_c}
+        eviction/S4FIFO/S4FIFO.c
+        eviction/S4FIFO/S4FIFO_predictor.c
+        eviction/S4FIFO/S4FIFO_model_real.c
         )
 endif()
 
@@ -135,6 +147,7 @@ set(cache_sources_c
     ${eviction_sources_c}
     ${prefetch_sources_c}
     cache.c
+    cacheAlgoRegistry.c
     plugin.c
 )
 

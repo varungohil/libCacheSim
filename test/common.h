@@ -225,6 +225,9 @@ static cache_t *create_test_cache(const char *alg_name,
     cache = LRUv0_init(cc_params, NULL);
   } else if (strcasecmp(alg_name, "Random") == 0) {
     cache = Random_init(cc_params, NULL);
+  } else if (strcasecmp(alg_name, "Merlin") == 0) {
+    // Bound sketch memory in the multi-size correctness test.
+    cache = merlin_init(cc_params, "sketch-scale=0.001");
   } else if (strcasecmp(alg_name, "MRU") == 0) {
     cache = MRU_init(cc_params, NULL);
   } else if (strcasecmp(alg_name, "LRU_K") == 0) {
@@ -289,10 +292,17 @@ static cache_t *create_test_cache(const char *alg_name,
     cache = S3FIFOv0_init(cc_params, "move-to-main-threshold=2");
   } else if (strcasecmp(alg_name, "S3-FIFO") == 0) {
     cache = S3FIFO_init(cc_params, "move-to-main-threshold=2");
+#if defined(ENABLE_S4FIFO) && ENABLE_S4FIFO == 1
+  } else if (strcasecmp(alg_name, "S4-FIFO") == 0) {
+    // truth values are S3-FIFO's, so compare against the static heuristic
+    cache = S4FIFO_init(cc_params, "auto-tune=0");
+#endif
   } else if (strcasecmp(alg_name, "Clock2QPlus") == 0) {
     cache = Clock2QPlus_init(cc_params, NULL);
   } else if (strcasecmp(alg_name, "Sieve") == 0) {
     cache = Sieve_init(cc_params, NULL);
+  } else if (strcasecmp(alg_name, "MQ") == 0) {
+    cache = MQ_init(cc_params, NULL);
   } else if (strcasecmp(alg_name, "Mithril") == 0) {
     cache = LRU_init(cc_params, NULL);
     cache->prefetcher =

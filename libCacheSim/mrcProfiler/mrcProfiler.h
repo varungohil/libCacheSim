@@ -90,7 +90,8 @@ typedef struct profiler_params {
               }
             } else {
               sample_rate = atof(buffer);
-              if (sample_rate <= 0 || sample_rate > 1) {
+              /* negated form so that NaN is rejected as well */
+              if (!(sample_rate > 0 && sample_rate <= 1)) {
                 ERROR("invalid sample rate for shards: %s\n", str);
                 exit(1);
               }
@@ -155,7 +156,8 @@ typedef struct profiler_params {
           } else if (current_param_idx == 1) {
             // check the sample rate or sample size
             sample_rate = atof(buffer);
-            if (sample_rate <= 0 || sample_rate > 1) {
+            /* negated form so that NaN is rejected as well */
+            if (!(sample_rate > 0 && sample_rate <= 1)) {
               ERROR("invalid sample rate for minisim: %s\n", str);
               exit(1);
             }
@@ -175,6 +177,17 @@ typedef struct profiler_params {
 
           start = end + 1;
         }
+      }
+
+      /* thread_num is only assigned when a third field is present, so
+       * --profiler-params=FIX_RATE,1 leaves it at 0 and skips the check just
+       * above. simulate_with_multi_caches then fails to queue any work and
+       * aborts with "cannot push data into thread_pool in get_miss_ratio",
+       * which says nothing about the parameter that was actually missing. */
+      if (current_param_idx < 3) {
+        ERROR("minisim params need FIX_RATE,<sample_rate>,<thread_num>: %s\n",
+              str);
+        exit(1);
       }
     }
   } minisim_params;

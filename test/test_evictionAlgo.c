@@ -182,6 +182,15 @@ static const cache_test_data_t test_data_truth[] = {
      .miss_cnt_true = {89307, 82387, 77041, 76791, 71300, 70343, 70455, 70355},
      .miss_byte_true = {4040718336, 3703628800, 3353047552, 3282235904,
                         3038256128, 2980646912, 2984458752, 2979649536}},
+    {.cache_name = "S4-FIFO",
+     .hashpower = 20,
+     .req_cnt_true = 113872,
+     .req_byte_true = 4368040448,
+     // with default params S4-FIFO reduces exactly to S3-FIFO, hence
+     // identical truth values to the "S3-FIFO" entry above
+     .miss_cnt_true = {90117, 80915, 75060, 72191, 69815, 65542, 60799, 56045},
+     .miss_byte_true = {4058576896, 3573827584, 3244417024, 3061737984,
+                        2898109952, 2628363776, 2425027072, 2327934464}},
     {.cache_name = "Sieve",
      .hashpower = 20,
      .req_cnt_true = 113872,
@@ -210,6 +219,13 @@ static const cache_test_data_t test_data_truth[] = {
      .miss_cnt_true = {90600, 81357, 75287, 72430, 70057, 65671, 60864, 55864},
      .miss_byte_true = {4061047808, 3577076736, 3242227712, 3061383680,
                         2898187264, 2624986112, 2422187008, 2322797568}},
+    {.cache_name = "MQ",
+     .hashpower = 20,
+     .req_cnt_true = 113872,
+     .req_byte_true = 4368040448,
+     .miss_cnt_true = {92034, 86146, 84751, 82240, 75185, 71503, 68987, 67640},
+     .miss_byte_true = {4149330432, 3836459008, 3791890432, 3677849600,
+                        3265613824, 3044815360, 2898076160, 2863112704}},
 #if defined(ENABLE_3L_CACHE) && ENABLE_3L_CACHE == 1
     {.cache_name = "3LCache",
      .hashpower = 20,
@@ -219,6 +235,13 @@ static const cache_test_data_t test_data_truth[] = {
      .miss_byte_true = {4214303232, 4061242368, 3778040320, 3660569600,
                         3100927488, 3078128640, 3075403776, 3061662720}},
 #endif /* ENABLE_3L_CACHE */
+    {.cache_name = "Merlin",
+     .hashpower = 20,
+     .req_cnt_true = 113872,
+     .req_byte_true = 4368040448,
+     .miss_cnt_true = {89842, 79364, 74651, 71671, 69144, 64850, 60371, 56257},
+     .miss_byte_true = {4047980032, 3523418112, 3219840512, 3037955072,
+                        2874276864, 2597470208, 2426512896, 2333233664}},
 };
 
 static void _verify_profiler_results(const cache_stat_t *res,
@@ -360,6 +383,11 @@ static void test_LRU_K(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[17]);
 }
 
+static void test_Merlin(gconstpointer user_data) {
+  test_cache_algorithm(user_data,
+                       &test_data_truth[G_N_ELEMENTS(test_data_truth) - 1]);
+}
+
 static void test_MRU(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[18]);
 }
@@ -376,29 +404,80 @@ static void test_S3FIFO(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[21]);
 }
 
+// An object read more than INT32_MAX times since the main FIFO last passed it
+// is the hottest object in the cache. Its 64-bit counter must survive the
+// eviction loop's local copy, or the loop sees a negative count and evicts it.
+static void test_S3FIFO_main_freq_beyond_int32(void) {
+  common_cache_params_t cc_params = {.cache_size = 100, .hashpower = 8};
+  cache_t *cache = S3FIFO_init(cc_params, NULL);
+  request_t *req = new_request();
+  req->obj_size = 1;
+
+  // Objects 1 to 10 fill the small FIFO and 11 to 100 go straight to main,
+  // since nothing has been evicted yet. Two reads each promote 1 to 10.
+  for (obj_id_t id = 1; id <= 100; id++) {
+    req->obj_id = id;
+    cache->get(cache, req);
+  }
+  for (int round = 0; round < 2; round++) {
+    for (obj_id_t id = 1; id <= 10; id++) {
+      req->obj_id = id;
+      cache->get(cache, req);
+    }
+  }
+
+  // Object 11 is the oldest in main. Give it 2^31 reads.
+  req->obj_id = 11;
+  cache_obj_t *hot = cache->find(cache, req, false);
+  g_assert_nonnull(hot);
+  hot->S3FIFO.freq = (int64_t)INT32_MAX + 1;
+
+  // The next miss promotes 1 to 10, overfilling main, so main evicts from its
+  // head. Object 11 must be reinserted, and object 12 evicted in its place.
+  req->obj_id = 101;
+  cache->get(cache, req);
+  req->obj_id = 11;
+  g_assert_nonnull(cache->find(cache, req, false));
+  req->obj_id = 12;
+  g_assert_null(cache->find(cache, req, false));
+
+  free_request(req);
+  cache->cache_free(cache);
+}
+
 static void test_S3FIFOv0(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[22]);
 }
 
-static void test_Sieve(gconstpointer user_data) {
+#if defined(ENABLE_S4FIFO) && ENABLE_S4FIFO == 1
+static void test_S4FIFO(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[23]);
 }
+#endif
 
-static void test_SLRU(gconstpointer user_data) {
+static void test_Sieve(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[24]);
 }
 
-static void test_SR_LRU(gconstpointer user_data) {
+static void test_SLRU(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[25]);
 }
 
-static void test_Clock2QPlus(gconstpointer user_data) {
+static void test_SR_LRU(gconstpointer user_data) {
   test_cache_algorithm(user_data, &test_data_truth[26]);
+}
+
+static void test_Clock2QPlus(gconstpointer user_data) {
+  test_cache_algorithm(user_data, &test_data_truth[27]);
+}
+
+static void test_MQ(gconstpointer user_data) {
+  test_cache_algorithm(user_data, &test_data_truth[28]);
 }
 
 #if defined(ENABLE_3L_CACHE) && ENABLE_3L_CACHE == 1
 static void test_3LCache(gconstpointer user_data) {
-  test_cache_algorithm(user_data, &test_data_truth[27]);
+  test_cache_algorithm(user_data, &test_data_truth[29]);
 }
 #endif /* ENABLE_3L_CACHE */
 
@@ -442,13 +521,20 @@ int main(int argc, char *argv[]) {
   g_test_add_data_func("/libCacheSim/cacheAlgo_LIRS", reader, test_LIRS);
   g_test_add_data_func("/libCacheSim/cacheAlgo_LRU", reader, test_LRU);
   g_test_add_data_func("/libCacheSim/cacheAlgo_LRU_K", reader, test_LRU_K);
+  g_test_add_data_func("/libCacheSim/cacheAlgo_Merlin", reader, test_Merlin);
+  g_test_add_data_func("/libCacheSim/cacheAlgo_MQ", reader, test_MQ);
   g_test_add_data_func("/libCacheSim/cacheAlgo_MRU", reader, test_MRU);
   g_test_add_data_func("/libCacheSim/cacheAlgo_QDLP_FIFO", reader,
                        test_QDLP_FIFO);
   g_test_add_data_func("/libCacheSim/cacheAlgo_Random", reader, test_Random);
   g_test_add_data_func("/libCacheSim/cacheAlgo_S3FIFO", reader, test_S3FIFO);
+  g_test_add_func("/libCacheSim/cacheAlgo_S3FIFO_main_freq_beyond_int32",
+                  test_S3FIFO_main_freq_beyond_int32);
   g_test_add_data_func("/libCacheSim/cacheAlgo_S3FIFOv0", reader,
                        test_S3FIFOv0);
+#if defined(ENABLE_S4FIFO) && ENABLE_S4FIFO == 1
+  g_test_add_data_func("/libCacheSim/cacheAlgo_S4FIFO", reader, test_S4FIFO);
+#endif
   g_test_add_data_func("/libCacheSim/cacheAlgo_Sieve", reader, test_Sieve);
   g_test_add_data_func("/libCacheSim/cacheAlgo_SLRU", reader, test_SLRU);
   g_test_add_data_func("/libCacheSim/cacheAlgo_SR_LRU", reader, test_SR_LRU);
